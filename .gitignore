@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+
+# Outputs
+results/
+
+# Course materials (assignment spec PDF — not to be published)
+ref/
