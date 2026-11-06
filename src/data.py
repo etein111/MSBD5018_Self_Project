@@ -63,7 +63,7 @@ def load_few_shot_demos(k: int = 4) -> list[dict]:
     per_label = k // 3 + (1 if k % 3 else 0)
     buckets = {0: [], 1: [], 2: []}
     for ex in ds:
-        lab = ex["label"]
+        lab = int(ex["label"])
         if len(buckets[lab]) < per_label:
             buckets[lab].append({
                 "premise": ex["premise"],

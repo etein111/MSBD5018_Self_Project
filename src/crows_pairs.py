@@ -13,25 +13,25 @@ from transformers import AutoModelForMaskedLM, AutoTokenizer
 from .utils import get_device, save_json
 
 
+CROWS_PAIRS_URL = (
+    "https://raw.githubusercontent.com/nyu-mll/crows-pairs/master/"
+    "data/crows_pairs_anonymized.csv"
+)
+
+
 def load_crows_pairs(bias_type: str = "race-color", n: int = 80, seed: int = 0):
-    from datasets import load_dataset
+    """Return a list of {"sent_more","sent_less","stereo_antistereo","bias_type"}.
 
-    name = "nyu-mll/crows_pairs"
-    ds = None
-    for split in ("test", "train", "validation"):
-        try:
-            ds = load_dataset(name, split=split)
-            break
-        except Exception:
-            continue
-    if ds is None:
-        ds = next(iter(load_dataset(name).values()))  # first split of a DatasetDict
+    datasets>=5 no longer supports script-based datasets (crows_pairs is one),
+    so we read the original CSV from the CrowS-Pairs repo and filter locally.
+    """
+    import pandas as pd
 
-    ds = ds.filter(lambda ex: ex["bias_type"] == bias_type)
-    ds = ds.shuffle(seed=seed)
+    df = pd.read_csv(CROWS_PAIRS_URL)
+    df = df[df["bias_type"] == bias_type].reset_index(drop=True)
     if n is not None:
-        ds = ds.select(range(min(n, len(ds))))
-    return ds
+        df = df.sample(n=min(n, len(df)), random_state=seed).reset_index(drop=True)
+    return df[["sent_more", "sent_less", "stereo_antistereo", "bias_type"]].to_dict("records")
 
 
 def sentence_pseudo_log_likelihood(text: str, model, tokenizer, device: str) -> float:

@@ -7,8 +7,9 @@ __pycache__/
 # OS
 .DS_Store
 
-# Outputs
+# Outputs & local caches
 results/
+.hf_cache/
 
 # Course materials (assignment spec PDF — not to be published)
 ref/
