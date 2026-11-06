@@ -8,8 +8,23 @@
 \usepackage{caption}
 \usepackage[hidelinks]{hyperref}
 \usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
 
 \captionsetup{font=small,labelfont=bf}
+
+% JSON listing: wrap long strings so they don't run off the margin
+\lstdefinestyle{json}{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  breakatwhitespace=true,
+  breakindent=1.2em,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{black!25},
+  showstringspaces=false,
+}
 
 \title{\textbf{Evaluation of Language Models: Prompting, Fine-tuning, Hallucination Detection, and Social Bias}}
 \author{MSBD5018 Individual Project\\Student ID: 21317834}
@@ -332,8 +347,7 @@ We evaluated local LMs on NLI, hallucination detection, and social bias. Prompti
 Full machine-readable dump from \texttt{report/case\_studies.json} (long string values are
 wrapped across lines here for display only).
 
-{\footnotesize
-\begin{verbatim}
+\begin{lstlisting}[style=json]
 {
   "nli": [
     {
@@ -396,8 +410,7 @@ wrapped across lines here for display only).
     }
   ]
 }
-\end{verbatim}
-}
+\end{lstlisting}
 
 \section{Reproducibility}
 All results are reproducible from the repository (see \texttt{README.md}). Key commands:
