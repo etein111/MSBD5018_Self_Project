@@ -1,0 +1,247 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+
+\captionsetup{font=small,labelfont=bf}
+
+\title{\textbf{Evaluation of Language Models: Prompting, Fine-tuning, Hallucination Detection, and Social Bias}}
+\author{MSBD5018 Individual Project\\Student ID: 21317834}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We evaluate local language models on three tasks: (1) natural language inference (NLI) as a three-way classification between \emph{entailment}, \emph{neutral}, and \emph{contradiction}; (2) hallucination detection, obtained by re-using the NLI models unchanged; and (3) social bias in masked language models via minimal pairs and pseudo-log-likelihood. Our \emph{primary} method for NLI is \emph{prompting}: we compare zero-shot, few-shot, chain-of-thought, and several advanced prompting techniques across a causal LM (GPT-2) and an instruction-tuned encoder-decoder model (Flan-T5), together with a systematic verbalizer ablation. As a \emph{secondary comparison}, we fine-tune BERT and RoBERTa sequence-classification heads on an MNLI subset and evaluate them on the same development set. We find that the verbalizer (the surface tokens mapped to each label) is the single largest lever in prompting---switching from the multi-subword words \texttt{entailment/neutral/contradiction} to single-token \texttt{yes/maybe/no} raises Flan-T5 few-shot accuracy from 0.45 to 0.63 on MNLI-matched, and turns a degenerate hallucination detector (F1 $=$ 0) into a strong one (F1 $=$ 0.88). Advanced reasoning prompts (self-consistency, rephrase-and-respond, step-back) give no reliable gain on these small models. Fine-tuning, by contrast, reaches 0.83 matched accuracy (RoBERTa), roughly 20 points above the best prompt, confirming that for small models supervised signal dominates prompting.
+\end{abstract}
+
+\section{Introduction}
+This project evaluates language models (LMs) rather than training new ones from scratch. We ask three questions. First, how well do locally-deployed LMs perform three-way NLI, and how sensitive are they to the prompting strategy? Second, can the same NLI models be reused unchanged as hallucination detectors? Third, do masked LMs encode racial stereotypes that can be measured with minimal pairs?
+
+For NLI (Part 2.1) our \emph{primary} method is prompting. Prompting is attractive because it requires no task-specific training, so it isolates the model's intrinsic ability. We compare a range of prompting strategies, from zero-shot and few-shot through chain-of-thought (CoT) to recent ``advanced'' techniques, on two model families with different inductive biases: GPT-2 (a 124M causal LM) and Flan-T5-base (a 250M instruction-tuned encoder-decoder). As a \emph{secondary} comparison we also fine-tune BERT-base (110M) and RoBERTa-base (125M) with a classification head, to quantify the gap between prompting and supervised fine-tuning on the same evaluation set.
+
+For hallucination detection (Part 2.2) we reuse the two prompting models unchanged: an NLI label of \emph{entailment} is read as ``factual'' and \emph{contradiction}/\emph{neutral} as ``non-factual''. For bias (Part 3) we apply the CrowS-Pairs pseudo-log-likelihood to BERT and RoBERTa in the \texttt{race-color} domain.
+
+\section{Setup and Methods}
+
+\subsection{NLI prompting}\label{sec:prompt}
+Each NLI instance is a pair $(p, h)$ (premise, hypothesis). We convert it into a prompt and map the model's output back to a label $y\in\{0,1,2\}$ (entailment, neutral, contradiction). We use four families of methods:
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Zero-shot.} The model scores each verbalizer token given the prompt, with no demonstrations.
+  \item \textbf{Few-shot ($k$).} $k$ label-balanced $(p,h,\text{label})$ demonstrations are prepended.
+  \item \textbf{Chain-of-thought (CoT).} The prompt appends ``Let's think step by step'' and the label is parsed from the generated text (with a zero-shot verbalizer fallback when parsing fails).
+  \item \textbf{Advanced prompts.} Self-consistency (sample several CoT chains and majority-vote), rephrase-and-respond (RaR), step-back, and emotion/role prefixes.
+\end{itemize}
+
+\subsection{Verbalizer scoring and length normalization}\label{sec:verbalizer}
+For the non-generative methods the model ranks candidate label strings. For a causal LM we score $\log P(c \mid \text{prompt})$ summed over the label's subword tokens; for the seq2seq Flan-T5 we use full-sequence teacher forcing (feed the decoder the label's prefix and sum the log-probabilities). Because a label may split into several subwords while another is a single token (e.g.\ T5 encodes \texttt{entailment} as four subwords but \texttt{neutral} as one), we \emph{length-normalize} by dividing by the number of subword tokens:
+
+\[
+\mathrm{score}(c)=\frac{1}{|c|}\sum_{t\in c}\log P(t \mid \text{context})\;,\qquad
+\hat y = \arg\max_{c\in\mathcal{C}} \mathrm{score}(c).
+\]
+
+This is the crux of the whole project: without this normalization (or with a poor choice of label surface), multi-subword labels are systematically under-scored, which we show degrades both NLI and hallucination detection. We ablate three verbalizers: \texttt{entailment/neutral/contradiction} (multi-subword), \texttt{A/B/C} (single token), and \texttt{yes/maybe/no} (single token).
+
+\subsection{Fine-tuning (secondary comparison)}\label{sec:finetune}
+To contrast prompting with supervision, we fine-tune \texttt{BertForSequenceClassification} and \texttt{RobertaForSequenceClassification} with a new 3-way head (no external fine-tuned checkpoint). We train on the first 15{,}000 labeled examples of the MNLI train split, for 3 epochs with AdamW (learning rate $2\times10^{-5}$, batch size 16, max length 128), and evaluate on the \emph{same} local MNLI development files used for prompting.
+
+\subsection{Hallucination detection}\label{sec:halluc}
+We use the \texttt{wiki\_bio\_gpt3\_hallucination} dataset, flattening it to sentence-level instances with \texttt{premise}=\texttt{wiki\_bio\_text} and \texttt{hypothesis}=each generated sentence. The annotation maps to a binary label (accurate$\to$factual; minor/major inaccurate$\to$non-factual). An NLI model is reused unchanged and its label is mapped by the rule $\text{entailment}\to\text{factual}$, else $\to\text{non-factual}$. We report accuracy, precision, recall, and F1 (positive class $=$ non-factual).
+
+\subsection{Bias via pseudo-log-likelihood}\label{sec:bias}
+We filter CrowS-Pairs to \texttt{bias\_type}=\texttt{race-color} and sample 80 minimal pairs with a fixed seed. For each sentence we compute the pseudo-log-likelihood by masking one token at a time:
+
+\[
+\mathrm{PLL}(s)=\sum_{t\in s}\log P\bigl(t \mid s_{\setminus t}\bigr),
+\]
+
+and count the fraction of pairs for which the model assigns higher PLL to the stereotyping sentence than to the anti-stereotyping sentence (0.5 $=$ unbiased).
+
+\subsection{Implementation}
+All experiments run on Apple Silicon (PyTorch MPS), Python 3.12, \texttt{transformers} 5.22.1, \texttt{torch} 2.15.0. Model weights are cached in a project-local directory (\texttt{HF\_HOME}) to isolate them from other projects. Models: GPT-2 (124M causal), Flan-T5-base (250M encoder-decoder), BERT-base-uncased (110M), RoBERTa-base (125M). MNLI development set: 2460 matched + 2464 mismatched after dropping 76 no-consensus items. CoT and the advanced prompts are evaluated on a 300-example subset for speed; all other runs use the full development set.
+
+\section{Results}
+
+\subsection{NLI prompting (primary)}\label{sec:res-nli}
+\begin{table}[h]
+\centering
+\caption{NLI accuracy by model and prompting method (chance $=$ 0.333). CoT uses $n=300$ per split.}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Method} & \textbf{GPT-2 (m/mm)} & \textbf{Flan-T5-base (m/mm)} \\
+\midrule
+zero-shot            & 0.356 / 0.352 & 0.365 / 0.367 \\
+few-shot $k=4$       & 0.315 / 0.323 & \textbf{0.450 / 0.450} \\
+CoT ($n=300$)        & 0.393 / 0.340 & 0.360 / 0.313 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Few-shot helps only the instruction-tuned Flan-T5 ($+8.5$ points over zero-shot) and hurts GPT-2 ($-4$ points); CoT is unstable and does not beat few-shot.
+
+\subsection{Verbalizer ablation}\label{sec:res-verb}
+\begin{table}[h]
+\centering
+\caption{Verbalizer ablation, few-shot $k=4$, MNLI-matched.}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Verbalizer} & \textbf{GPT-2} & \textbf{Flan-T5-base} \\
+\midrule
+entailment/neutral/contradiction & 0.315 & 0.450 \\
+A/B/C (single token)             & 0.363 & 0.493 \\
+\textbf{yes/maybe/no (single token)} & 0.366 & \textbf{0.633} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The verbalizer is the single largest lever: switching Flan-T5 few-shot from the multi-subword words to single-token \texttt{yes/maybe/no} gains $+18$ points. The root cause is subword splitting: T5 encodes \texttt{entailment} as four subwords while \texttt{neutral} and \texttt{contradiction} are single tokens, biasing the ranking even after length normalization.
+
+\subsection{Advanced prompts}\label{sec:res-adv}
+\begin{table}[h]
+\centering
+\caption{Advanced prompting, MNLI-matched, $n=300$ (chance 0.333).}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Method} & \textbf{Flan-T5-base} & \textbf{GPT-2} \\
+\midrule
+CoT (greedy, temp$=$0)          & 0.360 & -- \\
+Self-consistency $\times3$      & 0.357 & -- \\
+Self-consistency $\times5$      & 0.357 & -- \\
+Rephrase-and-respond (RaR)      & 0.360 & 0.383 \\
+Step-back                       & 0.360 & 0.383 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Self-consistency gives no gain over greedy CoT (0.357 vs.\ 0.360), and RaR/step-back are flat on Flan-T5 (0.360). On GPT-2 these generative prompts ($\approx$0.383) do beat zero-shot (0.356) and few-shot (0.315), because for a causal LM ``generate then parse'' is more reliable than verbalizer scoring. Figure~\ref{fig:f1} summarizes the main comparison.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figures/fig1_nli_prompt_vs_finetune.png}
+\caption{NLI accuracy: prompting vs.\ fine-tuning on the MNLI development set.}
+\label{fig:f1}
+\end{figure}
+
+\subsection{Fine-tuning (prompt vs.\ fine-tune)}\label{sec:res-ft}
+\begin{table}[h]
+\centering
+\caption{Fine-tuned sequence-classification heads (15k train $\times$ 3 epochs).}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Model} & \textbf{matched} & \textbf{mismatched} \\
+\midrule
+BERT-base-uncased & 0.750 & 0.766 \\
+\textbf{RoBERTa-base} & \textbf{0.831} & \textbf{0.828} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Fine-tuning dramatically outperforms every prompt (RoBERTa 0.831 vs.\ the best prompt 0.633, $+20$ points), using only 15k training examples. RoBERTa beats BERT by $+8$ points, consistent with its stronger pretraining.
+
+\subsection{Hallucination detection}\label{sec:res-halluc}
+\begin{table}[h]
+\centering
+\caption{Hallucination detection (\texttt{entailment\_factual} rule, 1908 sentences). Positive class $=$ non-factual.}
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Model} & \textbf{Verbalizer} & \textbf{Acc} & \textbf{P} & \textbf{R} & \textbf{F1} \\
+\midrule
+GPT-2            & label\_words    & 0.559 & 0.725 & 0.636 & 0.678 \\
+Flan-T5-base     & label\_words    & 0.270 & 0.000 & 0.000 & 0.000 \\
+\textbf{Flan-T5-base} & \textbf{yes/maybe/no} & \textbf{0.801} & \textbf{0.800} & \textbf{0.970} & \textbf{0.877} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+With the multi-subword verbalizer, Flan-T5 predicts \emph{entailment} for nearly every sentence and therefore never predicts non-factual, so precision/recall/F1 are all zero (and its accuracy is just the factual class proportion, 0.27). Switching to single-token \texttt{yes/maybe/no} fixes this completely (F1 0.88), again confirming that the ``degeneracy'' is a verbalizer artifact, not a model deficiency. Figure~\ref{fig:f3} plots this.
+
+\subsection{Race bias}\label{sec:res-bias}
+\begin{table}[h]
+\centering
+\caption{CrowS-Pairs \texttt{race-color} stereotypical-preference ratio (0.5 $=$ unbiased).}
+\begin{tabular}{lc}
+\toprule
+\textbf{Model} & \textbf{Ratio} \\
+\midrule
+BERT-base-uncased & 0.625 (50/80) \\
+RoBERTa-base      & 0.638 (51/80) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both masked LMs prefer the stereotyping sentence well above chance, consistent with prior findings that race stereotypes are encoded in pretrained LMs (Figure~\ref{fig:f4}).
+
+\section{Case studies}
+Table~\ref{tab:cases} shows three NLI examples under zero-shot prompting. All three---including a gold \emph{contradiction}---are predicted as \emph{entailment} by both models, directly illustrating the multi-subword verbalizer degeneracy of Section~\ref{sec:res-verb}.
+
+\begin{table}[h]
+\centering
+\caption{Zero-shot NLI case studies (MNLI-matched).}
+\label{tab:cases}
+\small
+\begin{tabular}{p{0.34\textwidth}p{0.22\textwidth}p{0.15\textwidth}p{0.12\textwidth}p{0.12\textwidth}}
+\toprule
+\textbf{Premise / Hypothesis} & \textbf{Gold} & \textbf{Flan-T5} & \textbf{GPT-2} \\
+\midrule
+``because I always had to do it and so I just pay someone else to do it \dots\ I think this year I'm going to have some landscaping put in'' / ``I am going to have someone landscape, since I always have someone do it.'' & entailment & entailment & entailment \\
+\addlinespace
+``(sums up the millennium coverage \dots examines whether the Y2K preparations were a waste.)'' / ``(The millennium coverage \dots is summed up and examined, but results are not out yet).'' & neutral & entailment & entailment \\
+\addlinespace
+``oh that sounds interesting too'' / ``That is not very attention grabbing.'' & contradiction & entailment & entailment \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A hallucination case study: for the premise ``Sir John Russell Reynolds, 1st Baronet (1828--1896) was a British neurologist\dots'' and hypothesis ``John Russell Reynolds (1820--1876) was an English lawyer, judge, and author'' (gold: non-factual), GPT-2 with \texttt{label\_words} predicts \emph{entailment} (factual, wrong), while Flan-T5 with \texttt{yes/maybe/no} predicts \emph{contradiction} (non-factual, correct). Finally, three bias minimal pairs that differ only in the race/name of the subject: ``These young Afro Americans are just criminals'' vs.\ ``These seniors white Americans are just criminals''; ``Eugene'' vs.\ ``LaShawnda''; and ``Won San Lee'' vs.\ ``Barbara''. The pseudo-log-likelihood is strongly confounded by surface-form frequency: the masked LMs assign far higher likelihood to a common single-token name such as ``Barbara'' than to ``Won San Lee'' (which splits into several rare subwords) independent of the stereotype, illustrating a known weakness of the pseudo-log-likelihood metric.
+
+\section{Insights}
+\begin{enumerate}
+  \item \textbf{The verbalizer, not the model, is the biggest lever.} A single-token verbalizer gains up to $+18$ points on NLI and rescues Flan-T5's hallucination detection from F1 0 to 0.88. Subword splitting of the label surface is the root cause, and length normalization alone does not remove the bias.
+  \item \textbf{Prompt-following differs sharply between the two model families.} Few-shot helps the instruction-tuned Flan-T5 but hurts the causal GPT-2, whose verbalizer scoring is dominated by surface-form prior. For GPT-2, free-form generation with label parsing is more reliable than token scoring.
+  \item \textbf{Advanced reasoning prompts do not pay off on small single-step models.} Self-consistency adds no accuracy over greedy CoT, and RaR/step-back are flat; the sampled reasoning diversity is noise, not signal, for a 3-way classification with 110--250M parameters.
+  \item \textbf{Supervised fine-tuning dominates prompting.} RoBERTa fine-tuned on 15k examples reaches 0.831 matched, $+20$ points above the best prompt and $+47$ points above GPT-2 zero-shot, confirming that when even a little labeled data is available, supervision is the better use of compute for small models.
+  \item \textbf{Cross-domain NLI transfers well but stereotypes persist.} Prompting shows a small matched/mismatched gap for Flan-T5, while both masked LMs prefer stereotyping continuations at $\approx$0.63, above the 0.5 unbiased baseline.
+\end{enumerate}
+
+\section{Conclusion}
+We evaluated local LMs on NLI, hallucination detection, and social bias. Prompting (our primary method) reveals that the verbalizer choice dominates everything else: a careful single-token verbalizer is worth more than few-shot, chain-of-thought, or any advanced prompt. The advanced techniques that help large LLMs do not transfer to small models on a single-step task. Fine-tuning (our secondary comparison) closes the loop: with only 15k examples, supervision beats the best prompt by 20 points. Together the results argue that for small models, one should fix the verbalizer first, then---if any labeled data exists---simply fine-tune.
+
+\begin{thebibliography}{9}
+\small
+\bibitem{mnli} A.~Williams, N.~Nangia, S.~Bowman. ``A Broad-Coverage Challenge Corpus for Sentence Understanding through Inference.'' EMNLP 2018.
+\bibitem{snli} S.~Bowman et al.\ ``A large annotated corpus for learning natural language inference.'' EMNLP 2015.
+\bibitem{crows} N.~Nangia, C.~Vania, R.~Bhalerao, S.~Bowman. ``CrowS-Pairs: A Challenge Dataset for Measuring Social Biases.'' EMNLP 2020.
+\bibitem{selfcheck} P.~Manakul, A.~Liusie, M.~Gales. ``SelfCheckGPT: Zero-Resource Black-Box Hallucination Detection.'' EMNLP 2023.
+\bibitem{gpt2} A.~Radford et al.\ ``Language Models are Unsupervised Multitask Learners.'' 2019.
+\bibitem{t5} C.~Raffel et al.\ ``Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer.'' JMLR 2020.
+\bibitem{flan} H.~Chung et al.\ ``Scaling Instruction-Finetuned Language Models.'' 2022.
+\bibitem{bert} J.~Devlin et al.\ ``BERT: Pre-training of Deep Bidirectional Transformers.'' NAACL 2019.
+\bibitem{roberta} Y.~Liu et al.\ ``RoBERTa: A Robustly Optimized BERT Pretraining Approach.'' 2019.
+\bibitem{cot} J.~Wei et al.\ ``Chain-of-Thought Prompting Elicits Reasoning in Large Language Models.'' NeurIPS 2022.
+\bibitem{sc} X.~Wang et al.\ ``Self-Consistency Improves Chain of Thought Reasoning.'' ICLR 2023.
+\bibitem{rar} Y.~Deng et al.\ ``Rephrase and Respond: Let Large Language Models Ask Better Questions.'' 2023.
+\bibitem{stepback} S.~Zheng et al.\ ``Take a Step Back: Evoking Reasoning via Abstraction.'' 2023.
+\end{thebibliography}
+
+\appendix
+\section{Reproducibility}
+All results are reproducible from the repository (see \texttt{README.md}). Key commands:
+\begin{verbatim}
+python -m src.nli_eval --model google/flan-t5-base --method few_shot \
+    --k 4 --verbalizer yes_maybe_no --split matched
+python -m src.finetune --model roberta-base
+python -m src.hallucination --model google/flan-t5-base --verbalizer yes_maybe_no
+python -m src.crows_pairs --models bert-base-uncased roberta-base \
+    --bias-type race-color --n 80
+\end{verbatim}
+
+\end{document}

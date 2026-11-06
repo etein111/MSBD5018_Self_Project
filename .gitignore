@@ -16,3 +16,7 @@ results/
 
 # Course materials (assignment spec PDF — not to be published)
 ref/
+
+# Submission artifacts (regenerated from src/, not versioned)
+individual 21317834.zip
+individual 21317834.pdf
