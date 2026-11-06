@@ -29,10 +29,16 @@ class Scorer:
         self.tokenizer = tokenizer
         self.model_type = model_type  # "causal" | "seq2seq"
         self.device = device
+        cfg = self.model.config
+        self.max_len = getattr(cfg, "n_positions", None) or \
+            getattr(cfg, "max_position_embeddings", None) or 512
 
     # ---- causal LM: score P(target | prompt) ----
     def _score_tokens_causal(self, prompt: str, target_tokens) -> list[float]:
-        prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+        prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False,
+                                           truncation=True,
+                                           max_length=self.max_len - 8,
+                                           truncation_side="left")
         scores = []
         for tstr in target_tokens:
             tids = self.tokenizer.encode(tstr, add_special_tokens=False)
@@ -47,23 +53,32 @@ class Scorer:
                 prev_idx = len(prompt_ids) + j - 1  # logit that predicts this token
                 lp = torch.log_softmax(logits[prev_idx], dim=0)
                 total += lp[tid].item()
-            scores.append(total)
+            # Length-normalize so multi-token verbalizers (entailment/contradiction)
+            # are comparable to single-token ones (neutral).
+            scores.append(total / len(tids))
         return scores
 
-    # ---- seq2seq LM: score the first decoded token ----
+    # ---- seq2seq LM: score the full target sequence via teacher forcing ----
     def _score_tokens_seq2seq(self, prompt: str, target_tokens) -> list[float]:
-        enc = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        enc = self.tokenizer(prompt, return_tensors="pt", truncation=True,
+                             max_length=self.max_len, truncation_side="left").to(self.device)
         start_id = getattr(self.model.config, "decoder_start_token_id", 0) or 0
-        dec = torch.tensor([[start_id]], device=self.device)
-        with torch.no_grad():
-            out = self.model(**enc, decoder_input_ids=dec)
-        lp = torch.log_softmax(out.logits[0, 0], dim=0)  # first generated token
         scores = []
         for tstr in target_tokens:
             tids = self.tokenizer.encode(tstr, add_special_tokens=False)
-            # single-token verbalizer assumption (holds for our token choices);
-            # multi-token verbalizers would need constrained generation instead.
-            scores.append(lp[tids[0]].item() if tids else -1e9)
+            if not tids:
+                scores.append(-1e9)
+                continue
+            # Feed [start] + target[:-1]; logits[j] then predicts target[j].
+            dec_input = torch.tensor([[start_id] + tids[:-1]], device=self.device)
+            with torch.no_grad():
+                logits = self.model(**enc, decoder_input_ids=dec_input).logits[0]
+            total = 0.0
+            for j, tid in enumerate(tids):
+                total += torch.log_softmax(logits[j], dim=0)[tid].item()
+            # Length-normalize so multi-token verbalizers (e.g. "entailment")
+            # are comparable to single-token ones (e.g. "neutral").
+            scores.append(total / len(tids))
         return scores
 
     def score_labels(self, prompt: str, verbalizer: dict) -> dict:
@@ -82,7 +97,9 @@ class Scorer:
 
     def generate(self, prompt: str, max_new_tokens: int = 64, temperature: float = 1.0,
                  num_samples: int = 1) -> list[str]:
-        enc = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        enc_max = self.max_len - max_new_tokens if self.model_type == "causal" else self.max_len
+        enc = self.tokenizer(prompt, return_tensors="pt", truncation=True,
+                             max_length=enc_max, truncation_side="left").to(self.device)
         outs = self.model.generate(
             **enc,
             max_new_tokens=max_new_tokens,
