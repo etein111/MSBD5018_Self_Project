@@ -46,11 +46,12 @@ def print_hallucination_table():
         print("\n(no hallu_*.json results yet)")
         return
     print("\n## Hallucination detection\n")
-    print("| model | rule | n | accuracy | precision | recall | f1 |")
-    print("|-------|------|---|----------|-----------|--------|----|")
-    for r in sorted(rows, key=lambda r: (r.get("model", ""), r.get("rule", ""))):
-        print(f"| {r.get('model')} | {r.get('rule', '-')} | {r.get('n')} | "
-              f"{r.get('accuracy', 0):.4f} | {r.get('precision', 0):.4f} | "
+    print("| model | verbalizer | rule | n | accuracy | precision | recall | f1 |")
+    print("|-------|------------|------|---|----------|-----------|--------|----|")
+    for r in sorted(rows, key=lambda r: (r.get("model", ""), r.get("verbalizer", ""),
+                                          r.get("rule", ""))):
+        print(f"| {r.get('model')} | {r.get('verbalizer', '-')} | {r.get('rule', '-')} | "
+              f"{r.get('n')} | {r.get('accuracy', 0):.4f} | {r.get('precision', 0):.4f} | "
               f"{r.get('recall', 0):.4f} | {r.get('f1', 0):.4f} |")
 
 

@@ -49,11 +49,12 @@
 
 ## 6. 幻觉检测（wiki_bio_gpt3_hallucination，1908 句）
 
-| 模型 | 规则 | accuracy | precision | recall | F1 |
-|------|------|----------|-----------|--------|-----|
-| gpt2 | entailment_factual | 0.559 | 0.725 | 0.636 | 0.678 |
-| gpt2 | contradiction_only | 0.559 | 0.725 | 0.636 | 0.678 |
-| flan-t5-base | entailment_factual | 0.270 | 0.000 | 0.000 | 0.000 |
+| 模型 | verbalizer | 规则 | accuracy | precision | recall | F1 |
+|------|------------|------|----------|-----------|--------|-----|
+| gpt2 | label_words | entailment_factual | 0.559 | 0.725 | 0.636 | 0.678 |
+| gpt2 | label_words | contradiction_only | 0.559 | 0.725 | 0.636 | 0.678 |
+| flan-t5-base | label_words（多子词） | entailment_factual | 0.270 | 0.000 | 0.000 | 0.000 |
+| **flan-t5-base** | **yes/maybe/no（单 token）** | entailment_factual | **0.801** | **0.800** | **0.970** | **0.877** |
 
 ## 7. 种族偏见（CrowS-Pairs race-color，80 对）
 
@@ -70,13 +71,13 @@
 4. **emotion/role 前缀无效**，gpt2 上反而略降。
 5. **Self-Consistency 无增益**：SC-3 与 SC-5 均为 0.357，还略低于纯贪心 CoT（0.360）。小模型 + 单步三分类下，采样多样性只加噪声。
 6. **RaR / Step-Back 对 flan-t5 零增益**（CoT=RaR=Step-Back=0.360），小指令模型把不同推理指令坍缩到同一标签；但对 gpt2 有用（0.383 > zero-shot 0.356 / few-shot 0.315）——对因果 LM，"生成+解析标签"整体优于 verbalizer 打分。
-7. **幻觉检测 gpt2 可用（F1 0.68）、flan-t5 退化（全预测 factual）**；zero-shot NLI 作为幻觉检测器整体偏弱。
+7. **幻觉检测对 verbalizer 极度敏感**：flan-t5 用多子词 `label_words` 时全预测 factual（acc 0.27、F1 0），换单 token `yes/maybe/no` 后飙到 **acc 0.80 / F1 0.88**（recall 0.97），反超 gpt2（F1 0.68）。进一步印证结论 1：子词切分是根本瓶颈，而非模型能力问题。
 8. **BERT/RoBERTa 均测得明显种族偏见**（刻板偏好比约 0.63）。
 
 ## 9. 局限与说明（写报告时需注明）
 
 - **flan few8（0.362）不可信**：8 个 demo 超出 flan-t5 512-token 上下文，截断产生伪影；真实可比的是 few4（0.450）。
-- **flan-t5 幻觉检测退化（0.270）**：zero-shot + 多子词 verbalizer 下全预测 entailment，属方法局限而非实现 bug（gpt2 同条件下 0.559 正常）。
+- **flan-t5 幻觉检测"退化"实为 verbalizer 伪影**：label_words（多子词）下全预测 entailment→factual（acc 0.27、F1 0）；换单 token `yes/maybe/no` 后 acc 0.80 / F1 0.88，属子词切分问题，非模型或数据问题。
 - **CoT 仅 300 条/划分**（生成式推理慢），结论需谨慎。
 - 幻觉检测的两个规则（entailment_factual 与 contradiction_only）在 gpt2 上结果一致（均为 0.559），说明 gpt2 在该任务上几乎不预测 `neutral`。
 
@@ -92,6 +93,7 @@ python -m src.nli_eval --model google/flan-t5-base --method cot --cot-samples 1 
 python -m src.nli_eval --model google/flan-t5-base --method rar --cot-samples 3 --cot-temperature 0.7 --split matched --max-samples 300 --out results/nli_flan_rar.json
 python -m src.nli_eval --model google/flan-t5-base --method step_back --cot-samples 3 --cot-temperature 0.7 --split matched --max-samples 300 --out results/nli_flan_stepback.json
 python -m src.hallucination --model gpt2 --out results/hallu_gpt2.json
+python -m src.hallucination --model google/flan-t5-base --verbalizer yes_maybe_no --out results/hallu_flan_ymn.json
 python -m src.crows_pairs --models bert-base-uncased roberta-base --bias-type race-color --n 80 --out results/bias.json
 python -m src.report --task all
 ```
