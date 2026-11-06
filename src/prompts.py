@@ -36,7 +36,7 @@ def build_prompt(premise, hypothesis, method="zero_shot", verbalizer=None,
                  model_type="causal", demos=None, prefix="") -> str:
     """Build the prompt string for one NLI example.
 
-    method:    "zero_shot" | "few_shot" | "cot"
+    method:    "zero_shot" | "few_shot" | "cot" | "rar" | "step_back"
     demos:     list of {"premise", "hypothesis", "label"} (used by few_shot)
     prefix:    optional instruction prepended (e.g. EMOTION_PREFIX / ROLE_PREFIX)
     model_type: reserved for model-specific templates (currently unused).
@@ -51,6 +51,24 @@ def build_prompt(premise, hypothesis, method="zero_shot", verbalizer=None,
             f"Premise: {premise}\nHypothesis: {hypothesis}\n"
             f"Determine whether the hypothesis is entailment, neutral, or contradiction.\n"
             f"Let's think step by step."
+        )
+        return "\n".join(parts)
+
+    if method == "rar":
+        parts.append(
+            f"Premise: {premise}\nHypothesis: {hypothesis}\n"
+            f"First rephrase the premise and hypothesis in your own words to clarify "
+            f"their meaning, then determine whether the hypothesis is entailment, "
+            f"neutral, or contradiction."
+        )
+        return "\n".join(parts)
+
+    if method == "step_back":
+        parts.append(
+            f"Premise: {premise}\nHypothesis: {hypothesis}\n"
+            f"Step back and first identify the general type of relationship between "
+            f"the premise and hypothesis, then determine whether the hypothesis is "
+            f"entailment, neutral, or contradiction."
         )
         return "\n".join(parts)
 

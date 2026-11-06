@@ -20,6 +20,10 @@ from .utils import accuracy, get_device, save_json
 
 PREFIXES = {"": "", "emotion": EMOTION_PREFIX, "role": ROLE_PREFIX}
 
+# Methods that generate a free-form reasoning chain and parse a label from it
+# (vs. zero_shot/few_shot, which score the verbalizer tokens directly).
+GENERATION_METHODS = {"cot", "rar", "step_back"}
+
 
 def load_scorer(model_name: str, device: str) -> Scorer:
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -32,14 +36,16 @@ def load_scorer(model_name: str, device: str) -> Scorer:
     return Scorer(model, tokenizer, model_type, device)
 
 
-def evaluate_split(scorer, df, method, verbalizer, demos, prefix, cot_samples):
+def evaluate_split(scorer, df, method, verbalizer, demos, prefix, cot_samples,
+                   cot_temperature):
     preds, golds = [], []
     for row in df.itertuples():
         prompt = build_prompt(row.premise, row.hypothesis, method=method,
                               verbalizer=verbalizer, model_type=scorer.model_type,
                               demos=demos, prefix=prefix)
-        if method == "cot":
-            pred = scorer.predict_cot(prompt, verbalizer, num_samples=cot_samples)
+        if method in GENERATION_METHODS:
+            pred = scorer.predict_cot(prompt, verbalizer, num_samples=cot_samples,
+                                      temperature=cot_temperature)
             if pred is None:  # fall back to zero-shot verbalizer scoring
                 p0 = build_prompt(row.premise, row.hypothesis, method="zero_shot",
                                   verbalizer=verbalizer, model_type=scorer.model_type)
@@ -54,12 +60,15 @@ def evaluate_split(scorer, df, method, verbalizer, demos, prefix, cot_samples):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, help="e.g. gpt2 or google/flan-t5-base")
-    ap.add_argument("--method", required=True, choices=["zero_shot", "few_shot", "cot"])
+    ap.add_argument("--method", required=True,
+                    choices=["zero_shot", "few_shot", "cot", "rar", "step_back"])
     ap.add_argument("--split", default="both", choices=["matched", "mismatched", "both"])
     ap.add_argument("--k", type=int, default=4, help="few-shot demo count")
     ap.add_argument("--verbalizer", default="label_words", choices=list(VERBALIZERS))
     ap.add_argument("--prefix", default="", choices=list(PREFIXES), help="emotion/role ablation")
     ap.add_argument("--cot-samples", type=int, default=3)
+    ap.add_argument("--cot-temperature", type=float, default=0.7,
+                    help="0 = greedy pure CoT; >0 = sampled (self-consistency)")
     ap.add_argument("--max-samples", type=int, default=None)
     ap.add_argument("--data-dir", default="data/multi_nli")
     ap.add_argument("--out", default=None, help="results JSON path")
@@ -81,11 +90,15 @@ def main():
         sub = df[df["split"] == split]
         if args.max_samples:
             sub = sub.head(args.max_samples)
-        preds, golds = evaluate_split(scorer, sub, args.method, verbalizer, demos, prefix, args.cot_samples)
+        preds, golds = evaluate_split(scorer, sub, args.method, verbalizer, demos, prefix,
+                                      args.cot_samples, args.cot_temperature)
         acc = accuracy(golds, preds)
         r = {"model": args.model, "method": args.method, "split": split,
              "verbalizer": args.verbalizer, "prefix": args.prefix, "k": args.k,
              "n": len(golds), "accuracy": acc}
+        if args.method in GENERATION_METHODS:
+            r["cot_samples"] = args.cot_samples
+            r["cot_temperature"] = args.cot_temperature
         results.append(r)
         print(f"[{args.model}] {args.method} | split={split} | n={r['n']} | acc={acc:.4f}")
 

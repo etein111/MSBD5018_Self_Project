@@ -25,13 +25,18 @@ def print_nli_table():
         print("(no nli_*.json results yet)")
         return
     print("\n## NLI prompting comparison\n")
-    print("| model | method | k | verbalizer | prefix | split | n | acc |")
-    print("|-------|--------|---|------------|--------|-------|---|-----|")
+    print("| model | method | k | verbalizer | prefix | split | n | samp | temp | acc |")
+    print("|-------|--------|---|------------|--------|-------|---|------|------|-----|")
+    gen = {"cot", "rar", "step_back"}
     for r in sorted(rows, key=lambda r: (r.get("model", ""), r.get("method", ""),
-                                          r.get("verbalizer", ""), r.get("split", ""))):
+                                          r.get("verbalizer", ""), r.get("split", ""),
+                                          r.get("cot_samples", 0))):
         k = r.get("k") if r.get("method") == "few_shot" else "-"
+        samp = r.get("cot_samples", "-") if r.get("method") in gen else "-"
+        temp = f"{r.get('cot_temperature'):.1f}" if (r.get("method") in gen
+                                                     and r.get("cot_temperature") is not None) else "-"
         print(f"| {r.get('model')} | {r.get('method')} | {k} | {r.get('verbalizer')} | "
-              f"{r.get('prefix') or '-'} | {r.get('split')} | {r.get('n')} | "
+              f"{r.get('prefix') or '-'} | {r.get('split')} | {r.get('n')} | {samp} | {temp} | "
               f"{r.get('accuracy', 0):.4f} |")
 
 
