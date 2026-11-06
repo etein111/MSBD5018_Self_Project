@@ -7,6 +7,9 @@ __pycache__/
 # OS
 .DS_Store
 
+# IDE
+.idea/
+
 # Outputs & local caches
 results/
 .hf_cache/
